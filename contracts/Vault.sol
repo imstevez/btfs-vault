@@ -114,6 +114,7 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   function init(address _issuer, address[] calldata _tokens) public initializer {
     require(_issuer != address(0), "invalid issuer");
     require(issuer == address(0), "already initialized");
+    require(_tokens.length > 0, "tokens length less than 1");
     UUPSUpgradeable.__UUPSUpgradeable_init();
     ERC1967UpgradeUpgradeable.__ERC1967Upgrade_init();
     issuer = _issuer;
@@ -220,6 +221,7 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
   function _addTokens(address[] _tokens) internal {
     for (uint256 i = 0; i < _tokens.length; i++) {
+      require(!_tokensSet.contains(_tokens[i]), "token already in the set");
       _tokensSet.add(_tokens[i]);
     }
     emit TokensAdded(_tokens);
@@ -232,6 +234,8 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
   function _removeTokens(address[] _tokens) internal {
     for (uint256 i = 0; i < _tokens.length; i++) {
+      require(_tokensSet.contains(_tokens[i]), "token not in the set");
+      require(_tokensSet.length() > 1, "tokens length will less than 1");
       _tokensSet.remove(_tokens[i]);
     }
     emit TokensRemoved(_tokens);
