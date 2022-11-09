@@ -8,6 +8,8 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/presets/ERC20PresetMinterPauser.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/ERC1967/ERC1967UpgradeUpgradeable.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+
 
 
 /**
@@ -20,6 +22,7 @@ as a beneficiary, we should always take into account the possibility that a cheq
 */
 contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   using SafeMath for uint;
+  using EnumerableSet for EnumerableSet.AddressSet;
 
   event ChequeCashed(
     address indexed beneficiary,
@@ -33,6 +36,8 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   event ChequeBounced(address token);
   event VaultWithdraw(address token, address indexed from, uint amount);
   event VaultDeposit(address token, address indexed from, uint amount);
+  event TokensAdded(address[] tokens);
+  event TokensRemoved(address[] tokens);
 
   struct EIP712Domain {
     string name;
@@ -95,6 +100,8 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   bool public bounced;
 
   bool public v1Migrated;
+
+  EnumerableSet.AddressSet private _tokensSet;
   mapping (address => mapping(address => uint)) public tokensPaidOut;
   mapping (address => uint) public tokensTotalPaidOut;
   mapping (address => bool) public tokensBounced;
@@ -104,37 +111,18 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   _issuer must be an Externally Owned Account, or it must support calling the function cashCheque
   @param _token the token this Vault uses
   */
-  function init(address _issuer, address _token) public initializer {
+  function init(address _issuer, address[] calldata _tokens) public initializer {
     require(_issuer != address(0), "invalid issuer");
     require(issuer == address(0), "already initialized");
     UUPSUpgradeable.__UUPSUpgradeable_init();
     ERC1967UpgradeUpgradeable.__ERC1967Upgrade_init();
     issuer = _issuer;
-    token = ERC20(_token);
+    _addTokens(_tokens);
     v1Migrated = true;
   }
 
-
-  function migrate() public {
-    require(msg.sender == issuer, "not issuer");
-    _migrate();
-  }
-
-  /**
-  migrate original versions data to new version
-  */
-  function _migrate() internal {
-    if (!v1Migrated) {
-      address tokenAddr = address(token);
-      tokensPaidOut[tokenAddr] = paidOut;
-      tokensTotalPaidOut[tokenAddr] = totalPaidOut;
-      tokensBounced[tokenAddr] = bounced;
-      v1Migrated = true;
-    }
-  }
-
   /// @return the balance of the Vault
-  function totalbalanceOf(address _token) public view returns(uint) {
+  function totalBalanceOf(address _token) public view returns(uint) {
     return ERC20(_token).balanceOf(address(this));
   }
 
@@ -161,7 +149,7 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
     require(cumulativePayout > tokensPaidOut[_token][beneficiary], "Vault: cannot cash");
     uint totalPayout = cumulativePayout.sub(tokensPaidOut[_token][beneficiary]);
-    uint balance = totalbalanceOf(_token);
+    uint balance = totalBalanceOf(_token);
     /* let the world know that the issuer has over-promised on outstanding cheques */
     if (totalPayout > balance) {
       tokensBounced[_token] = true;
@@ -171,7 +159,6 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
     /* increase the stored paidOut amount to avoid double payout */
     tokensPaidOut[_token][beneficiary] = tokensPaidOut[_token][beneficiary].add(totalPayout);
-    tokensTotalPaidOut[_token] = tokensTotalPaidOut[_token].add(totalPayout);
 
     /* do the actual payment */
     require(ERC20(_token).transfer(recipient, totalPayout), "transfer failed");
@@ -194,7 +181,7 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
     /* only issuer can do this */
     require(msg.sender == issuer, "not issuer");
     /* ensure we don't take anything from the hard deposit */
-    require(amount <= totalbalanceOf(_token), "totalbalance not sufficient");
+    require(amount <= totalBalanceOf(_token), "total balance not sufficient");
     require(ERC20(_token).transfer(issuer, amount), "transfer failed");
     emit VaultWithdraw(_token, issuer, amount);
   }
@@ -224,5 +211,52 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
   function implementation() public view returns (address impl) {
     return ERC1967UpgradeUpgradeable._getImplementation();
+  }
+
+  function addTokens(address[] calldata _tokens) external {
+    require(msg.sender == issuer, "not issuer");
+    _addTokens(_tokens);
+  }
+
+  function _addTokens(address[] _tokens) internal {
+    for (uint256 i = 0; i < _tokens.length; i++) {
+      _tokensSet.add(_tokens[i]);
+    }
+    emit TokensAdded(_tokens);
+  }
+
+  function removeTokens(address[] calldata _tokens) external {
+    require(msg.sender == issuer, "not issuer");
+    _removeTokens(_tokens);
+  }
+
+  function _removeTokens(address[] _tokens) internal {
+    for (uint256 i = 0; i < _tokens.length; i++) {
+      _tokensSet.remove(_tokens[i]);
+    }
+    emit TokensRemoved(_tokens);
+  }
+
+  function getTokens() external view returns (address[] memory) {
+    return _tokensSet.values();
+  }
+
+  function getToken(address _token) external view returns (bool) {
+    return _tokensSet.contains(_token);
+  }
+
+  function migrate() public {
+    require(msg.sender == issuer, "not issuer");
+    _migrate();
+  }
+
+  function _migrate() internal {
+    if (!v1Migrated) {
+      address tokenAddr = address(token);
+      tokensPaidOut[tokenAddr] = paidOut;
+      tokensTotalPaidOut[tokenAddr] = totalPaidOut;
+      tokensBounced[tokenAddr] = bounced;
+      v1Migrated = true;
+    }
   }
 }
