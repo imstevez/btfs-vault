@@ -8,8 +8,6 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/presets/ERC20PresetMinterPauser.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/ERC1967/ERC1967UpgradeUpgradeable.sol";
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-
 
 
 /**
@@ -22,22 +20,18 @@ as a beneficiary, we should always take into account the possibility that a cheq
 */
 contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   using SafeMath for uint;
-  using EnumerableSet for EnumerableSet.AddressSet;
 
   event ChequeCashed(
     address indexed beneficiary,
     address indexed recipient,
     address indexed caller,
-    address token,
     uint totalPayout,
     uint cumulativePayout,
     uint callerPayout
   );
-  event ChequeBounced(address token);
-  event VaultWithdraw(address token, address indexed from, uint amount);
-  event VaultDeposit(address token, address indexed from, uint amount);
-  event TokensAdded(address[] tokens);
-  event TokensRemoved(address[] tokens);
+  event ChequeBounced();
+  event VaultWithdraw(address indexed from, uint amount);
+  event VaultDeposit(address indexed from, uint amount);
 
   struct EIP712Domain {
     string name;
@@ -49,22 +43,22 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
     "EIP712Domain(string name,string version,uint256 chainId)"
   );
   bytes32 public constant CHEQUE_TYPEHASH = keccak256(
-    "Cheque(address vault,address beneficiary,address token,uint256 cumulativePayout)"
+    "Cheque(address vault,address beneficiary,uint256 cumulativePayout)"
   );
 
 
 
   // the EIP712 domain this contract uses
   //function domain() internal pure returns (EIP712Domain memory) {
-  function domain() internal view returns (EIP712Domain memory) {
+    function domain() internal view returns (EIP712Domain memory) {
     uint256 chainId;
     assembly {
       chainId := chainid()
     }
     return EIP712Domain({
-    name: "Vault",
-    version: "1.0",
-    chainId: chainId
+      name: "Vault",
+      version: "1.0",
+      chainId: chainId
     });
   }
 
@@ -75,7 +69,7 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
         keccak256(bytes(eip712Domain.name)),
         keccak256(bytes(eip712Domain.version)),
         eip712Domain.chainId
-      ));
+    ));
   }
 
   // recover a signature with the EIP712 signing scheme
@@ -84,46 +78,38 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
         "\x19\x01",
         domainSeparator(domain()),
         hash
-      ));
+    ));
     return ECDSA.recover(digest, sig);
   }
 
   /* The token against which this Vault writes cheques */
   ERC20 public token;
-  /* @deleted associates every beneficiary with how much has been paid out to them */
+  /* associates every beneficiary with how much has been paid out to them */
   mapping (address => uint) public paidOut;
-  /* @deleted total amount paid out */
+  /* total amount paid out */
   uint public totalPaidOut;
   /* issuer of the contract, set at construction */
   address public issuer;
-  /* @deleted indicates wether a cheque bounced in the past */
+  /* indicates wether a cheque bounced in the past */
   bool public bounced;
-
-  bool public v1Migrated;
-  EnumerableSet.AddressSet private _tokensSet;
-  mapping (address => mapping(address => uint)) public tokensPaidOut;
-  mapping (address => uint) public tokensTotalPaidOut;
-  mapping (address => bool) public tokensBounced;
 
   /**
   @param _issuer the issuer of cheques from this Vault (needed as an argument for "Setting up a Vault as a payment").
   _issuer must be an Externally Owned Account, or it must support calling the function cashCheque
   @param _token the token this Vault uses
   */
-  function init(address _issuer, address[] calldata _tokens) public initializer {
+  function init(address _issuer, address _token) public initializer {
     require(_issuer != address(0), "invalid issuer");
     require(issuer == address(0), "already initialized");
-    require(_tokens.length > 0, "tokens length less than 1");
     UUPSUpgradeable.__UUPSUpgradeable_init();
     ERC1967UpgradeUpgradeable.__ERC1967Upgrade_init();
     issuer = _issuer;
-    _addTokens(_tokens);
-    v1Migrated = true;
+    token = ERC20(_token);
   }
 
   /// @return the balance of the Vault
-  function totalBalanceOf(address _token) public view returns(uint) {
-    return ERC20(_token).balanceOf(address(this));
+  function totalbalance() public view returns(uint) {
+    return token.balanceOf(address(this));
   }
 
   /**
@@ -137,72 +123,70 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   function _cashChequeInternal(
     address beneficiary,
     address recipient,
-    address _token,
     uint cumulativePayout,
     bytes memory issuerSig
   ) internal {
     /* The issuer must have given explicit approval to the cumulativePayout, either by being the caller or by signature*/
     if (msg.sender != issuer) {
-      require(issuer == recoverEIP712(chequeHash(address(this), beneficiary, _token, cumulativePayout), issuerSig),
-        "invalid issuer signature");
+      require(issuer == recoverEIP712(chequeHash(address(this), beneficiary, cumulativePayout), issuerSig),
+      "invalid issuer signature");
     }
 
-    require(cumulativePayout > tokensPaidOut[_token][beneficiary], "Vault: cannot cash");
-    uint totalPayout = cumulativePayout.sub(tokensPaidOut[_token][beneficiary]);
-    uint balance = totalBalanceOf(_token);
+    require(cumulativePayout > paidOut[beneficiary], "Vault: cannot cash");
+    uint totalPayout = cumulativePayout.sub(paidOut[beneficiary]);
+    uint balance = totalbalance();
     /* let the world know that the issuer has over-promised on outstanding cheques */
     if (totalPayout > balance) {
-      tokensBounced[_token] = true;
-      emit ChequeBounced(_token);
+      bounced = true;
+      emit ChequeBounced();
     }
     require(totalPayout <= balance, "Vault: insufficient fund");
 
     /* increase the stored paidOut amount to avoid double payout */
-    tokensPaidOut[_token][beneficiary] = tokensPaidOut[_token][beneficiary].add(totalPayout);
+    paidOut[beneficiary] = paidOut[beneficiary].add(totalPayout);
+    totalPaidOut = totalPaidOut.add(totalPayout);
 
     /* do the actual payment */
-    require(ERC20(_token).transfer(recipient, totalPayout), "transfer failed");
+    require(token.transfer(recipient, totalPayout), "transfer failed");
 
-    emit ChequeCashed(beneficiary, recipient, msg.sender, _token, totalPayout, cumulativePayout, 0);
+    emit ChequeCashed(beneficiary, recipient, msg.sender, totalPayout, cumulativePayout, 0);
   }
 
   /**
   @notice cash a cheque as beneficiary
   @param recipient receives the differences between cumulativePayment and what was already paid-out to the beneficiary minus callerPayout
-  @param _token the specified cash token
   @param cumulativePayout amount requested to pay out
   @param issuerSig issuer must have given explicit approval on the cumulativePayout to the beneficiary
   */
-  function cashChequeBeneficiary(address recipient, address _token, uint cumulativePayout, bytes memory issuerSig) public {
-    _cashChequeInternal(msg.sender, recipient, _token, cumulativePayout, issuerSig);
+  function cashChequeBeneficiary(address recipient, uint cumulativePayout, bytes memory issuerSig) public {
+    _cashChequeInternal(msg.sender, recipient, cumulativePayout, issuerSig);
   }
 
-  function withdraw(address _token, uint amount) public {
+  function withdraw(uint amount) public {
     /* only issuer can do this */
     require(msg.sender == issuer, "not issuer");
     /* ensure we don't take anything from the hard deposit */
-    require(amount <= totalBalanceOf(_token), "total balance not sufficient");
-    require(ERC20(_token).transfer(issuer, amount), "transfer failed");
-    emit VaultWithdraw(_token, issuer, amount);
+    require(amount <= totalbalance(), "totalbalance not sufficient");
+    require(token.transfer(issuer, amount), "transfer failed");
+    emit VaultWithdraw(issuer, amount);
   }
 
   /*
   * deposit wbtt to address(this), befrore it, must approve to address(this)
   */
-  function deposit(address _token, uint amount) public {
-    require(ERC20(_token).transferFrom(msg.sender, address(this), amount), "deposit failed");
-    emit VaultDeposit(_token, msg.sender, amount);
+  function deposit(uint amount) public {
+    require(token.transferFrom(msg.sender, address(this), amount), "deposit failed");
+    emit VaultDeposit(msg.sender, amount);
   }
 
-  function chequeHash(address vault, address beneficiary, address _token, uint cumulativePayout)
+  function chequeHash(address vault, address beneficiary, uint cumulativePayout)
   internal pure returns (bytes32) {
     return keccak256(abi.encode(
-        CHEQUE_TYPEHASH,
-        vault,
-        beneficiary,
-        _token,
-        cumulativePayout
-      ));
+      CHEQUE_TYPEHASH,
+      vault,
+      beneficiary,
+      cumulativePayout
+    ));
   }
 
   function _authorizeUpgrade(address) internal  view override {
@@ -210,56 +194,6 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   }
 
   function implementation() public view returns (address impl) {
-    return ERC1967UpgradeUpgradeable._getImplementation();
-  }
-
-  function addTokens(address[] calldata _tokens) external {
-    require(msg.sender == issuer, "not issuer");
-    _addTokens(_tokens);
-  }
-
-  function _addTokens(address[] _tokens) internal {
-    for (uint256 i = 0; i < _tokens.length; i++) {
-      require(!_tokensSet.contains(_tokens[i]), "token already in the set");
-      _tokensSet.add(_tokens[i]);
-    }
-    emit TokensAdded(_tokens);
-  }
-
-  function removeTokens(address[] calldata _tokens) external {
-    require(msg.sender == issuer, "not issuer");
-    _removeTokens(_tokens);
-  }
-
-  function _removeTokens(address[] _tokens) internal {
-    for (uint256 i = 0; i < _tokens.length; i++) {
-      require(_tokensSet.contains(_tokens[i]), "token not in the set");
-      require(_tokensSet.length() > 1, "tokens length will less than 1");
-      _tokensSet.remove(_tokens[i]);
-    }
-    emit TokensRemoved(_tokens);
-  }
-
-  function getTokens() external view returns (address[] memory) {
-    return _tokensSet.values();
-  }
-
-  function getToken(address _token) external view returns (bool) {
-    return _tokensSet.contains(_token);
-  }
-
-  function migrate() public {
-    require(msg.sender == issuer, "not issuer");
-    _migrate();
-  }
-
-  function _migrate() internal {
-    if (!v1Migrated) {
-      address tokenAddr = address(token);
-      tokensPaidOut[tokenAddr] = paidOut;
-      tokensTotalPaidOut[tokenAddr] = totalPaidOut;
-      tokensBounced[tokenAddr] = bounced;
-      v1Migrated = true;
-    }
+      return ERC1967UpgradeUpgradeable._getImplementation();
   }
 }

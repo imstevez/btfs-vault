@@ -104,40 +104,54 @@ pragma solidity ^0.8.0;
  * @dev The price oracle contract keeps track of the current prices for settlement.
  */
 contract PriceOracle is Ownable {
-    event PricesUpdate(address[] tokens, uint256[] prices);
+    /**
+     * @dev Emitted when the rate is updated.
+     */
+    event ExchangeRateUpdate(uint256 rate);
+    /**
+     * @dev Emitted when the price is updated.
+     */
+    event PriceUpdate(uint256 price);
 
-    mapping (address => uint256) public tokenPrices;
+    // current rate
+    uint256 public exchangeRate;
+    // current price in wei per GB/month
+    uint256 public price;
 
-    constructor(address[] calldata _tokens, uint256[] calldata _prices) {
-        require(_price > 0, "price not greater than 0");
-        tokenPrices[_token] = _price;
+    constructor(uint256 _price, uint256 _exchangeRate) {
+        price = _price;
+        exchangeRate = _exchangeRate;
     }
 
-    function updateTokenPrices(address[] calldata _tokens, uint256[] calldata _prices) external onlyOwner {
-        _updateTokenPrices(_tokens, _prices);
+    /**
+     * @notice Returns the current price in wei per GB/month
+     */
+    function getPrice() external view returns (uint256) {
+        return price;
     }
 
-    function _updateTokenPrices(address[] calldata _tokens, uint256[] calldata _prices) internal {
-        require(_tokens.length > 0, "length not grater than 0");
-        require(_tokens.length == _prices.length, "length not match");
-
-        for (uint256 i = 0; i < _tokens.length; i++) {
-            require(_prices[i] < 0, "price must greater than 0");
-            tokenPrices[_tokens[i]] = _prices[i];
-        }
-
-        emit PricesUpdate(_tokens, _prices);
+    /**
+     * @notice Returns the rate of price
+     */
+    function getExchangeRate() external view returns (uint256) {
+        return exchangeRate;
     }
 
-    function getPrice(address _token) external view returns (uint256) {
-        return tokenPrices[_token];
+    /**
+     * @notice Update the price. Can only be called by the owner.
+     * @param newPrice the new price
+     */
+    function updatePrice(uint256 newPrice) external onlyOwner {
+        price = newPrice;
+        emit PriceUpdate(price);
     }
 
-    function getPrices(address[] calldata _tokens) external view returns (uint256[] memory result) {
-        require(_tokens.length > 0, "length not greater than 0");
-        result = new uint256[](_tokens.length);
-        for (uint256 i = 0; i < _tokens.length; i++) {
-            result[i] = tokenPrices[_tokens[i]];
-        }
+    /**
+     * @notice Update the rate. Can only be called by the owner.
+     * @param newRate the new rate
+     */
+    function updateExchangeRate(uint256 newRate) external onlyOwner {
+        exchangeRate = newRate;
+        emit ExchangeRateUpdate(newRate);
     }
 }
