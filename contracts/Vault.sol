@@ -117,7 +117,6 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   function init(address _issuer, address _token) public initializer {
     require(_issuer != address(0), "invalid issuer");
     require(issuer == address(0), "already initialized");
-    require(_tokens.length > 0, "tokens length less than 1");
     UUPSUpgradeable.__UUPSUpgradeable_init();
     ERC1967UpgradeUpgradeable.__ERC1967Upgrade_init();
     issuer = _issuer;
@@ -166,6 +165,10 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
       /* increase the stored paidOut amount to avoid double payout */
       paidOut[beneficiary] = paidOut[beneficiary].add(totalPayout);
       totalPaidOut = totalPaidOut.add(totalPayout);
+
+      /* do the actual payment */
+      require(ERC20(_token).transfer(recipient, totalPayout), "transfer failed");
+      emit ChequeCashed(beneficiary, recipient, msg.sender, _token, totalPayout, cumulativePayout, 0);
     } else {
       require(cumulativePayout > multiTokensPaidOut[_token][beneficiary], "Vault: cannot cash");
       uint totalPayout = cumulativePayout.sub(multiTokensPaidOut[_token][beneficiary]);
@@ -180,11 +183,11 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
       /* increase the stored paidOut amount to avoid double payout */
       multiTokensPaidOut[_token][beneficiary] = multiTokensPaidOut[_token][beneficiary].add(totalPayout);
       multiTokensTotalPaidOut[_token] = multiTokensTotalPaidOut[_token].add(totalPaidOut);
-    }
 
-    /* do the actual payment */
-    require(ERC20(_token).transfer(recipient, totalPayout), "transfer failed");
-    emit ChequeCashed(beneficiary, recipient, msg.sender, _token, totalPayout, cumulativePayout, 0);
+      /* do the actual payment */
+      require(ERC20(_token).transfer(recipient, totalPayout), "transfer failed");
+      emit ChequeCashed(beneficiary, recipient, msg.sender, _token, totalPayout, cumulativePayout, 0);
+    }
   }
 
   /**
