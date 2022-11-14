@@ -90,35 +90,40 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
   /* The token against which this Vault writes cheques */
   ERC20 public token;
-  /* @deleted associates every beneficiary with how much has been paid out to them */
+  /* associates every beneficiary with how much has been paid out to them */
   mapping (address => uint) public paidOut;
-  /* @deleted total amount paid out */
+  /* total amount paid out */
   uint public totalPaidOut;
   /* issuer of the contract, set at construction */
   address public issuer;
-  /* @deleted indicates wether a cheque bounced in the past */
+  /* indicates wether a cheque bounced in the past */
   bool public bounced;
 
-  bool public v1Migrated;
+  /* all supported tokens set */
   EnumerableSet.AddressSet private _tokensSet;
-  mapping (address => mapping(address => uint)) public tokensPaidOut;
-  mapping (address => uint) public tokensTotalPaidOut;
-  mapping (address => bool) public tokensBounced;
+
+  /* paid out for multi-tokens */
+  mapping (address => mapping(address => uint)) public multiTokensPaidOut;
+  /* total paid out for multi-tokens */
+  mapping (address => uint) public multiTokensTotalPaidOut;
+  /* bounced for multi-tokens */
+  mapping (address => bool) public multiTokensBounced;
 
   /**
   @param _issuer the issuer of cheques from this Vault (needed as an argument for "Setting up a Vault as a payment").
   _issuer must be an Externally Owned Account, or it must support calling the function cashCheque
   @param _token the token this Vault uses
   */
-  function init(address _issuer, address[] calldata _tokens) public initializer {
+  function init(address _issuer, address _token) public initializer {
     require(_issuer != address(0), "invalid issuer");
     require(issuer == address(0), "already initialized");
     require(_tokens.length > 0, "tokens length less than 1");
     UUPSUpgradeable.__UUPSUpgradeable_init();
     ERC1967UpgradeUpgradeable.__ERC1967Upgrade_init();
     issuer = _issuer;
+    token = ERC20(_token);
+    address[] calldata _tokens = [_token];
     _addTokens(_tokens);
-    v1Migrated = true;
   }
 
   /// @return the balance of the Vault
@@ -147,22 +152,38 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
         "invalid issuer signature");
     }
 
-    require(cumulativePayout > tokensPaidOut[_token][beneficiary], "Vault: cannot cash");
-    uint totalPayout = cumulativePayout.sub(tokensPaidOut[_token][beneficiary]);
-    uint balance = totalBalanceOf(_token);
-    /* let the world know that the issuer has over-promised on outstanding cheques */
-    if (totalPayout > balance) {
-      tokensBounced[_token] = true;
-      emit ChequeBounced(_token);
-    }
-    require(totalPayout <= balance, "Vault: insufficient fund");
+    if (_token == address(token)) {
+      require(cumulativePayout > paidOut[beneficiary], "Vault: cannot cash");
+      uint totalPayout = cumulativePayout.sub(paidOut[beneficiary]);
+      uint balance = totalBalanceOf(_token);
+      /* let the world know that the issuer has over-promised on outstanding cheques */
+      if (totalPayout > balance) {
+        bounced = true;
+        emit ChequeBounced(_token);
+      }
+      require(totalPayout <= balance, "Vault: insufficient fund");
 
-    /* increase the stored paidOut amount to avoid double payout */
-    tokensPaidOut[_token][beneficiary] = tokensPaidOut[_token][beneficiary].add(totalPayout);
+      /* increase the stored paidOut amount to avoid double payout */
+      paidOut[beneficiary] = paidOut[beneficiary].add(totalPayout);
+      totalPaidOut = totalPaidOut.add(totalPayout);
+    } else {
+      require(cumulativePayout > multiTokensPaidOut[_token][beneficiary], "Vault: cannot cash");
+      uint totalPayout = cumulativePayout.sub(multiTokensPaidOut[_token][beneficiary]);
+      uint balance = totalBalanceOf(_token);
+      /* let the world know that the issuer has over-promised on outstanding cheques */
+      if (totalPayout > balance) {
+        multiTokensBounced[_token] = true;
+        emit ChequeBounced(_token);
+      }
+      require(totalPayout <= balance, "Vault: insufficient fund");
+
+      /* increase the stored paidOut amount to avoid double payout */
+      multiTokensPaidOut[_token][beneficiary] = multiTokensPaidOut[_token][beneficiary].add(totalPayout);
+      multiTokensTotalPaidOut[_token] = multiTokensTotalPaidOut[_token].add(totalPaidOut);
+    }
 
     /* do the actual payment */
     require(ERC20(_token).transfer(recipient, totalPayout), "transfer failed");
-
     emit ChequeCashed(beneficiary, recipient, msg.sender, _token, totalPayout, cumulativePayout, 0);
   }
 
@@ -218,7 +239,7 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
     _addTokens(_tokens);
   }
 
-  function _addTokens(address[] _tokens) internal {
+  function _addTokens(address[] calldata _tokens) internal {
     for (uint256 i = 0; i < _tokens.length; i++) {
       require(!_tokensSet.contains(_tokens[i]), "token already in the set");
       _tokensSet.add(_tokens[i]);
@@ -231,10 +252,10 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
     _removeTokens(_tokens);
   }
 
-  function _removeTokens(address[] _tokens) internal {
+  function _removeTokens(address[] calldata _tokens) internal {
     for (uint256 i = 0; i < _tokens.length; i++) {
       require(_tokensSet.contains(_tokens[i]), "token not in the set");
-      require(_tokensSet.length() > 1, "tokens length will less than 1");
+      require(_tokens[i] != address(token), "cannot remove token 0");
       _tokensSet.remove(_tokens[i]);
     }
     emit TokensRemoved(_tokens);
@@ -246,20 +267,5 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
   function getToken(address _token) external view returns (bool) {
     return _tokensSet.contains(_token);
-  }
-
-  function migrate() public {
-    require(msg.sender == issuer, "not issuer");
-    _migrate();
-  }
-
-  function _migrate() internal {
-    if (!v1Migrated) {
-      address tokenAddr = address(token);
-      tokensPaidOut[tokenAddr] = paidOut;
-      tokensTotalPaidOut[tokenAddr] = totalPaidOut;
-      tokensBounced[tokenAddr] = bounced;
-      v1Migrated = true;
-    }
   }
 }
