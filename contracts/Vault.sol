@@ -36,8 +36,8 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   event ChequeBounced(address token);
   event VaultWithdraw(address token, address indexed from, uint amount);
   event VaultDeposit(address token, address indexed from, uint amount);
-  event TokensAdded(address[] tokens);
-  event TokensRemoved(address[] tokens);
+  event MultiTokensAdded(address[] tokens);
+  event MultiTokensRemoved(address[] tokens);
 
   struct EIP712Domain {
     string name;
@@ -99,9 +99,8 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   /* indicates wether a cheque bounced in the past */
   bool public bounced;
 
-  /* all supported tokens set */
-  EnumerableSet.AddressSet private _tokensSet;
-
+  /* supported multi-tokens set */
+  EnumerableSet.AddressSet private _multiTokensSet;
   /* paid out for multi-tokens */
   mapping (address => mapping(address => uint)) public multiTokensPaidOut;
   /* total paid out for multi-tokens */
@@ -121,11 +120,14 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
     ERC1967UpgradeUpgradeable.__ERC1967Upgrade_init();
     issuer = _issuer;
     token = ERC20(_token);
-    address[] calldata _tokens = [_token];
-    _addTokens(_tokens);
   }
 
-  /// @return the balance of the Vault
+  /// @return the token(wbtt) balance of the Vault
+  function totalbalance() public view returns(uint) {
+    return token.balanceOf(address(this));
+  }
+
+  /// @return the specified token balance of the Vault
   function totalBalanceOf(address _token) public view returns(uint) {
     return ERC20(_token).balanceOf(address(this));
   }
@@ -167,7 +169,7 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
       totalPaidOut = totalPaidOut.add(totalPayout);
 
       /* do the actual payment */
-      require(ERC20(_token).transfer(recipient, totalPayout), "transfer failed");
+      require(token.transfer(recipient, totalPayout), "transfer failed");
       emit ChequeCashed(beneficiary, recipient, msg.sender, _token, totalPayout, cumulativePayout, 0);
     } else {
       require(cumulativePayout > multiTokensPaidOut[_token][beneficiary], "Vault: cannot cash");
@@ -237,38 +239,30 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
     return ERC1967UpgradeUpgradeable._getImplementation();
   }
 
-  function addTokens(address[] calldata _tokens) external {
+  function addMultiTokens(address[] calldata _tokens) external {
     require(msg.sender == issuer, "not issuer");
-    _addTokens(_tokens);
-  }
-
-  function _addTokens(address[] calldata _tokens) internal {
     for (uint256 i = 0; i < _tokens.length; i++) {
-      require(!_tokensSet.contains(_tokens[i]), "token already in the set");
-      _tokensSet.add(_tokens[i]);
+      require(!_multiTokensSet.contains(_tokens[i]), "token already in the set");
+      _multiTokensSet.add(_tokens[i]);
     }
-    emit TokensAdded(_tokens);
+    emit MultiTokensAdded(_tokens);
   }
 
-  function removeTokens(address[] calldata _tokens) external {
+  function removeMultiTokens(address[] calldata _tokens) external {
     require(msg.sender == issuer, "not issuer");
-    _removeTokens(_tokens);
-  }
-
-  function _removeTokens(address[] calldata _tokens) internal {
     for (uint256 i = 0; i < _tokens.length; i++) {
-      require(_tokensSet.contains(_tokens[i]), "token not in the set");
+      require(_multiTokensSet.contains(_tokens[i]), "token not in the set");
       require(_tokens[i] != address(token), "cannot remove token 0");
-      _tokensSet.remove(_tokens[i]);
+      _multiTokensSet.remove(_tokens[i]);
     }
-    emit TokensRemoved(_tokens);
+    emit MultiTokensRemoved(_tokens);
   }
 
-  function getTokens() external view returns (address[] memory) {
-    return _tokensSet.values();
+  function getMultiTokens() external view returns (address[] memory) {
+    return _multiTokensSet.values();
   }
 
-  function getToken(address _token) external view returns (bool) {
-    return _tokensSet.contains(_token);
+  function getMultiToken(address _token) external view returns (bool) {
+    return _multiTokensSet.contains(_token);
   }
 }
