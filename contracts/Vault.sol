@@ -231,18 +231,10 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
       ));
   }
 
-  function _authorizeUpgrade(address) internal  view override {
-    require(msg.sender == issuer, "not issuer");
-  }
-
-  function implementation() public view returns (address impl) {
-    return ERC1967UpgradeUpgradeable._getImplementation();
-  }
-
   function addMultiTokens(address[] calldata _tokens) external {
     require(msg.sender == issuer, "not issuer");
     for (uint256 i = 0; i < _tokens.length; i++) {
-      require(!_multiTokensSet.contains(_tokens[i]), "token already in the set");
+      require(_tokens[i] != address(0), "invalid token");
       _multiTokensSet.add(_tokens[i]);
     }
     emit MultiTokensAdded(_tokens);
@@ -251,8 +243,6 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
   function removeMultiTokens(address[] calldata _tokens) external {
     require(msg.sender == issuer, "not issuer");
     for (uint256 i = 0; i < _tokens.length; i++) {
-      require(_multiTokensSet.contains(_tokens[i]), "token not in the set");
-      require(_tokens[i] != address(token), "cannot remove token 0");
       _multiTokensSet.remove(_tokens[i]);
     }
     emit MultiTokensRemoved(_tokens);
@@ -264,5 +254,13 @@ contract Vault is ERC1967UpgradeUpgradeable,UUPSUpgradeable{
 
   function getMultiToken(address _token) external view returns (bool) {
     return _multiTokensSet.contains(_token);
+  }
+
+  function _authorizeUpgrade(address) internal  view override {
+    require(msg.sender == issuer, "not issuer");
+  }
+
+  function implementation() public view returns (address impl) {
+    return ERC1967UpgradeUpgradeable._getImplementation();
   }
 }

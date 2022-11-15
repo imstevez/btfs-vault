@@ -108,24 +108,20 @@ contract PriceOracle is Ownable {
 
     mapping (address => uint256) public tokenPrices;
 
-    constructor(address[] calldata _tokens, uint256[] calldata _prices) {
-        require(_price > 0, "price not greater than 0");
-        tokenPrices[_token] = _price;
+    constructor(address[] calldata  _tokens, uint256[] calldata _prices) {
+        _updatePrices(_tokens, _prices);
     }
 
-    function updateTokenPrices(address[] calldata _tokens, uint256[] calldata _prices) external onlyOwner {
-        _updateTokenPrices(_tokens, _prices);
+    function updatePrices(address[] calldata _tokens, uint256[] calldata _prices) external onlyOwner {
+        _updatePrices(_tokens, _prices);
     }
 
-    function _updateTokenPrices(address[] calldata _tokens, uint256[] calldata _prices) internal {
+    function _updatePrices(address[] calldata _tokens, uint256[] calldata _prices) internal {
         require(_tokens.length > 0, "length not grater than 0");
         require(_tokens.length == _prices.length, "length not match");
-
         for (uint256 i = 0; i < _tokens.length; i++) {
-            require(_prices[i] < 0, "price must greater than 0");
             tokenPrices[_tokens[i]] = _prices[i];
         }
-
         emit PricesUpdate(_tokens, _prices);
     }
 
